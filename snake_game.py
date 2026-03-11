@@ -1,205 +1,325 @@
 import pygame
 import sys
 import random
-import os
+import cv2
+import mediapipe as mp
+import numpy as np
+import threading
+import time
 
-# Initialize Pygame
+# Khởi tạo Pygame
 pygame.init()
 
-# Constants
-CELL_SIZE = 40
-CELL_NUMBER = 20
-SCREEN_WIDTH = CELL_SIZE * CELL_NUMBER
-SCREEN_HEIGHT = CELL_SIZE * CELL_NUMBER
+# Khởi tạo MediaPipe Hands
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+mp_draw = mp.solutions.drawing_utils
 
-FPS = 60
+# Khởi tạo Camera
+cap = cv2.VideoCapture(0)
 
-# Colors
-BG_COLOR = (175, 215, 70)
-GRID_COLOR = (167, 209, 61)
+# Kích thước màn hình
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
 
-# Paths
-SPRITES_DIR = "sprites"
+# Màu sắc (pixel đen trắng)
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
 
-def load_sprite(filename):
-    path = os.path.join(SPRITES_DIR, filename)
-    if os.path.exists(path):
-        image = pygame.image.load(path).convert_alpha()
-        return pygame.transform.scale(image, (CELL_SIZE, CELL_SIZE))
-    else:
-        print(f"Lỗi: Không tìm thấy sprite '{filename}'. Sẽ dùng khối màu đỏ thay thế.")
-        surf = pygame.Surface((CELL_SIZE, CELL_SIZE))
-        surf.fill((255, 0, 0))
-        return surf
+# Kích thước khối cờ (pixel)
+BLOCK_SIZE = 20
 
-class SNAKE:
-    def __init__(self):
-        self.body = [pygame.math.Vector2(5, 10), pygame.math.Vector2(4, 10), pygame.math.Vector2(3, 10)]
-        self.direction = pygame.math.Vector2(1, 0)
-        self.new_block = False
+# Tốc độ game
+FPS = 5
 
-        # Load Sprites
-        self.head_up = load_sprite('head_up.png')
-        self.head_down = load_sprite('head_down.png')
-        self.head_right = load_sprite('head_right.png')
-        self.head_left = load_sprite('head_left.png')
-        
-        self.tail_up = load_sprite('tail_up.png')
-        self.tail_down = load_sprite('tail_down.png')
-        self.tail_right = load_sprite('tail_right.png')
-        self.tail_left = load_sprite('tail_left.png')
-        
-        self.body_img = load_sprite('body.png')
+# Shared variables for Camera Thread
+current_frame = None
+latest_gesture = None  # Cử chỉ phát hiện được ("UP", "DOWN", "LEFT", "RIGHT")
+camera_active = True
 
-    def draw_snake(self, screen):
-        self.update_head_graphics()
-        self.update_tail_graphics()
-
-        for index, block in enumerate(self.body):
-            x = int(block.x * CELL_SIZE)
-            y = int(block.y * CELL_SIZE)
-            block_rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
-
-            if index == 0:
-                screen.blit(self.head, block_rect)
-            elif index == len(self.body) - 1:
-                screen.blit(self.tail, block_rect)
-            else:
-                screen.blit(self.body_img, block_rect)
-
-    def update_head_graphics(self):
-        head_relation = self.body[1] - self.body[0]
-        if head_relation == pygame.math.Vector2(1, 0): self.head = self.head_left
-        elif head_relation == pygame.math.Vector2(-1, 0): self.head = self.head_right
-        elif head_relation == pygame.math.Vector2(0, 1): self.head = self.head_up
-        elif head_relation == pygame.math.Vector2(0, -1): self.head = self.head_down
-
-    def update_tail_graphics(self):
-        tail_relation = self.body[-2] - self.body[-1]
-        if tail_relation == pygame.math.Vector2(1, 0): self.tail = self.tail_left
-        elif tail_relation == pygame.math.Vector2(-1, 0): self.tail = self.tail_right
-        elif tail_relation == pygame.math.Vector2(0, 1): self.tail = self.tail_up
-        elif tail_relation == pygame.math.Vector2(0, -1): self.tail = self.tail_down
-
-    def move_snake(self):
-        if self.new_block == True:
-            body_copy = self.body[:]
-            body_copy.insert(0, body_copy[0] + self.direction)
-            self.body = body_copy[:]
-            self.new_block = False
-        else:
-            body_copy = self.body[:-1]
-            body_copy.insert(0, body_copy[0] + self.direction)
-            self.body = body_copy[:]
-
-    def add_block(self):
-        self.new_block = True
-
-    def reset(self):
-        self.body = [pygame.math.Vector2(5, 10), pygame.math.Vector2(4, 10), pygame.math.Vector2(3, 10)]
-        self.direction = pygame.math.Vector2(1, 0)
-
-
-class FOOD:
-    def __init__(self):
-        self.x = random.randint(0, CELL_NUMBER - 1)
-        self.y = random.randint(0, CELL_NUMBER - 1)
-        self.pos = pygame.math.Vector2(self.x, self.y)
-        self.food_img = load_sprite('food.png')
-
-    def draw_food(self, screen):
-        food_rect = pygame.Rect(int(self.pos.x * CELL_SIZE), int(self.pos.y * CELL_SIZE), CELL_SIZE, CELL_SIZE)
-        screen.blit(self.food_img, food_rect)
-        
-    def randomize(self):
-        self.x = random.randint(0, CELL_NUMBER - 1)
-        self.y = random.randint(0, CELL_NUMBER - 1)
-        self.pos = pygame.math.Vector2(self.x, self.y)
-
-
-class MAIN:
-    def __init__(self):
-        self.snake = SNAKE()
-        self.food = FOOD()
-
-    def update(self):
-        self.snake.move_snake()
-        self.check_collision()
-        self.check_fail()
-
-    def draw_elements(self, screen):
-        self.food.draw_food(screen)
-        self.snake.draw_snake(screen)
-
-    def check_collision(self):
-        if self.food.pos == self.snake.body[0]:
-            self.food.randomize()
-            self.snake.add_block()
+def gesture_processing_thread():
+    global current_frame, latest_gesture, camera_active
+    
+    prev_x, prev_y = 0, 0
+    swipe_threshold = 25 # Minimum pixel movement to count as a swipe
+    cooldown = 0
+    
+    while camera_active:
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.1)
+            continue
             
-            # Không cho phép mồi sinh ra đè lên mình rắn
-            while self.food.pos in self.snake.body:
-                self.food.randomize()
+        frame = cv2.flip(frame, 1) # Mirror image
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = hands.process(rgb_frame)
+        
+        h, w, c = frame.shape
+        
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                
+                # Use tip of index finger (landmark 8) for tracking
+                cx, cy = int(hand_landmarks.landmark[8].x * w), int(hand_landmarks.landmark[8].y * h)
+                
+                if cooldown > 0:
+                    cooldown -= 1
+                else:
+                    if prev_x != 0 and prev_y != 0:
+                        dx = cx - prev_x
+                        dy = cy - prev_y
+                        
+                        # Determine swipe direction
+                        if abs(dx) > swipe_threshold or abs(dy) > swipe_threshold:
+                            if abs(dx) > abs(dy):
+                                if dx > 0: # Swipe Right
+                                    latest_gesture = "RIGHT"
+                                    cooldown = 15
+                                elif dx < 0: # Swipe Left
+                                    latest_gesture = "LEFT"
+                                    cooldown = 15
+                            else:
+                                if dy > 0: # Swipe Down
+                                    latest_gesture = "DOWN"
+                                    cooldown = 15
+                                elif dy < 0: # Swipe Up
+                                    latest_gesture = "UP"
+                                    cooldown = 15
+                                    
+                # Draw tracking point
+                cv2.circle(frame, (cx, cy), 15, (0, 255, 0), -1)
+                prev_x, prev_y = cx, cy
+        else:
+            prev_x, prev_y = 0, 0
+            
+        current_frame = frame
+        time.sleep(0.01) # Small sleep to prevent 100% CPU lock
 
-    def check_fail(self):
-        # Đâm vào tường
-        if not 0 <= self.snake.body[0].x < CELL_NUMBER or not 0 <= self.snake.body[0].y < CELL_NUMBER:
-            self.game_over()
+# Khởi chạy thread xử lý camera
+cam_thread = threading.Thread(target=gesture_processing_thread, daemon=True)
+cam_thread.start()
 
-        # Đâm vào chính mình
-        for block in self.snake.body[1:]:
-            if block == self.snake.body[0]:
-                self.game_over()
+# Khởi tạo màn hình
+screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+pygame.display.set_caption("Snake - Black & White Pixel Art")
 
-    def game_over(self):
-        self.snake.reset()
+clock = pygame.time.Clock()
 
-def draw_grid(screen):
-    for x in range(0, SCREEN_WIDTH, CELL_SIZE):
-        for y in range(0, SCREEN_HEIGHT, CELL_SIZE):
-            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
-            pygame.draw.rect(screen, GRID_COLOR, rect, 1)
+try:
+    font_style = pygame.font.SysFont("courier", 24, bold=True)
+    large_font = pygame.font.SysFont("courier", 36, bold=True)
+except:
+    font_style = pygame.font.Font(None, 24)
+    large_font = pygame.font.Font(None, 36)
 
-def main():
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Rắn săn mồi (Snake Game)")
-    clock = pygame.time.Clock()
+def draw_score(score):
+    value = font_style.render(f"Score: {score}", True, WHITE)
+    screen.blit(value, [10, 10])
 
-    game = MAIN()
+def draw_snake(snake_list):
+    for block in snake_list:
+        pygame.draw.rect(screen, WHITE, [block[0], block[1], BLOCK_SIZE, BLOCK_SIZE])
 
-    SCREEN_UPDATE = pygame.USEREVENT
-    pygame.time.set_timer(SCREEN_UPDATE, 150) # Tốc độ chạy của rắn (ms)
+def get_random_food_pos(exclude_list, size=BLOCK_SIZE):
+    while True:
+        x = round(random.randrange(0, WINDOW_WIDTH - size) / BLOCK_SIZE) * BLOCK_SIZE
+        y = round(random.randrange(0, WINDOW_HEIGHT - size) / BLOCK_SIZE) * BLOCK_SIZE
+        
+        # Đảm bảo mồi mới không nằm đè lên thân rắn
+        collision = False
+        for block in exclude_list:
+            if (block[0] >= x and block[0] < x + size) and (block[1] >= y and block[1] < y + size):
+                collision = True
+                break
+        
+        if not collision:
+            return x, y
 
-    running = True
-    while running:
+def game_loop():
+    global latest_gesture
+    game_over = False
+    game_close = False
+    
+    # Consume any pending gesture at game start
+    latest_gesture = None
+
+    # Vị trí đầu rắn ban đầu
+    x1 = WINDOW_WIDTH // 2
+    y1 = WINDOW_HEIGHT // 2
+
+    x1_change = BLOCK_SIZE
+    y1_change = 0
+
+    snake_list = []
+    snake_length = 3
+    
+    # Khởi tạo rắn ban đầu (nằm ngang)
+    for i in range(snake_length):
+        snake_list.append([x1 - i * BLOCK_SIZE, y1])
+
+    score = 0
+    small_food_eaten = 0
+
+    # Khởi tạo vị trí mồi nhỏ
+    food_x, food_y = get_random_food_pos(snake_list)
+
+    # Khởi tạo biến cho mồi lớn
+    big_food_active = False
+    big_food_x, big_food_y = -100, -100
+    big_food_size = BLOCK_SIZE * 2
+
+    while not game_over:
+        while game_close:
+            screen.fill(BLACK)
+            go_msg = large_font.render("GAME OVER", True, WHITE)
+            restart_msg = font_style.render("Restarting...", True, WHITE)
+            score_msg = font_style.render(f"Final Score: {score}", True, WHITE)
+            
+            screen.blit(go_msg, [WINDOW_WIDTH // 2 - go_msg.get_width() // 2, WINDOW_HEIGHT // 3])
+            screen.blit(restart_msg, [WINDOW_WIDTH // 2 - restart_msg.get_width() // 2, WINDOW_HEIGHT // 2])
+            screen.blit(score_msg, [WINDOW_WIDTH // 2 - score_msg.get_width() // 2, WINDOW_HEIGHT // 2 + 50])
+            
+            pygame.display.update()
+            
+            # Wait for 2 seconds then restart automatically
+            pygame.time.delay(2000)
+            return  # Trả về để được gọi lại bởi hàm main
+            
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
-            
-            if event.type == SCREEN_UPDATE:
-                game.update()
-                
+                game_over = True
+                pygame.quit()
+                sys.exit()
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_UP and game.snake.direction.y != 1:
-                    game.snake.direction = pygame.math.Vector2(0, -1)
-                elif event.key == pygame.K_DOWN and game.snake.direction.y != -1:
-                    game.snake.direction = pygame.math.Vector2(0, 1)
-                elif event.key == pygame.K_LEFT and game.snake.direction.x != 1:
-                    game.snake.direction = pygame.math.Vector2(-1, 0)
-                elif event.key == pygame.K_RIGHT and game.snake.direction.x != -1:
-                    game.snake.direction = pygame.math.Vector2(1, 0)
+                if event.key == pygame.K_LEFT and x1_change == 0:
+                    x1_change = -BLOCK_SIZE
+                    y1_change = 0
+                elif event.key == pygame.K_RIGHT and x1_change == 0:
+                    x1_change = BLOCK_SIZE
+                    y1_change = 0
+                elif event.key == pygame.K_UP and y1_change == 0:
+                    y1_change = -BLOCK_SIZE
+                    x1_change = 0
+                elif event.key == pygame.K_DOWN and y1_change == 0:
+                    y1_change = BLOCK_SIZE
+                    x1_change = 0
 
-        if not running:
-            break
+        # --- Áp dụng Gesture nhận được từ Thread Camera ---
+        if latest_gesture == "LEFT" and x1_change == 0:
+            x1_change = -BLOCK_SIZE
+            y1_change = 0
+        elif latest_gesture == "RIGHT" and x1_change == 0:
+            x1_change = BLOCK_SIZE
+            y1_change = 0
+        elif latest_gesture == "UP" and y1_change == 0:
+            y1_change = -BLOCK_SIZE
+            x1_change = 0
+        elif latest_gesture == "DOWN" and y1_change == 0:
+            y1_change = BLOCK_SIZE
+            x1_change = 0
+            
+        # Clear gesture queue sau khi đã xử lý trong frame này
+        latest_gesture = None
 
-        screen.fill(BG_COLOR)
-        draw_grid(screen)
-        game.draw_elements(screen)
+        # Cập nhật vị trí đầu rắn
+        x1 += x1_change
+        y1 += y1_change
+
+        # Kiểm tra đụng tường
+        if x1 >= WINDOW_WIDTH or x1 < 0 or y1 >= WINDOW_HEIGHT or y1 < 0:
+            game_close = True
+
+        screen.fill(BLACK)
         
+        # Vẽ mồi nhỏ
+        pygame.draw.rect(screen, WHITE, [food_x, food_y, BLOCK_SIZE, BLOCK_SIZE])
+        
+        # Vẽ mồi lớn (nếu có)
+        if big_food_active:
+            pygame.draw.rect(screen, WHITE, [big_food_x, big_food_y, big_food_size, big_food_size])
+
+        # Cập nhật mảng thân rắn
+        snake_head = [x1, y1]
+        snake_list.append(snake_head)
+        
+        if len(snake_list) > snake_length:
+            del snake_list[0]
+
+        # Kiểm tra rắn cắn vào đuôi
+        for block in snake_list[:-1]:
+            if block == snake_head:
+                game_close = True
+
+        # Vẽ rắn
+        draw_snake(snake_list)
+        # Hiển thị điểm số
+        draw_score(score)
+
+        # Draw camera feed (Picture-in-Picture)
+        if current_frame is not None:
+            # Resize frame for PiP (Tăng kích thước lên gấp đôi để dễ nhìn tay)
+            pip_w, pip_h = 320, 240
+            pip_frame = cv2.resize(current_frame, (pip_w, pip_h))
+            pip_frame = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
+            
+            # Convert to Pygame surface
+            # Pygame shape requirement: (width, height, channels)
+            # OpenCV provides (height, width, channels)
+            pip_surface = pygame.surfarray.make_surface(np.rot90(pip_frame))
+            pip_surface = pygame.transform.flip(pip_surface, True, False)
+            
+            # Draw a border around PIP
+            pygame.draw.rect(pip_surface, (0, 255, 0), pip_surface.get_rect(), 3)
+            
+            # Blit onto main screen (top right corner)
+            screen.blit(pip_surface, (WINDOW_WIDTH - pip_w - 10, 10))
+
         pygame.display.update()
+
+        # Xử lý ăn mồi nhỏ
+        if x1 == food_x and y1 == food_y:
+            food_x, food_y = get_random_food_pos(snake_list)
+            snake_length += 1
+            score += 1
+            small_food_eaten += 1
+            
+            # Kích hoạt mồi lớn mỗi khi đủ 10 mồi nhỏ
+            if small_food_eaten >= 10:
+                small_food_eaten = 0
+                if not big_food_active:
+                    big_food_active = True
+                    big_food_x, big_food_y = get_random_food_pos(snake_list, size=big_food_size)
+
+        # Xử lý ăn mồi lớn
+        if big_food_active:
+            # Kiểm tra xem rắn có ăn trúng phần diện tích 4 blocks của khối mồi lớn 2x2 không
+            if (big_food_x <= x1 < big_food_x + big_food_size) and \
+               (big_food_y <= y1 < big_food_y + big_food_size):
+                score += 5
+                snake_length += 2 # Tùy chọn: Tăng chiều dài nhiều hơn khi ăn mồi lớn
+                big_food_active = False # Biến mất mồi lớn sau khi ăn
+
         clock.tick(FPS)
 
-    pygame.quit()
-    sys.exit()
+def main():
+    global camera_active
+    try:
+        while True:
+            game_loop()
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        camera_active = False # Signal camera thread to exit
+        pygame.quit()
+        if cap.isOpened():
+            cap.release()
+        sys.exit()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
